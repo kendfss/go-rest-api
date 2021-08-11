@@ -1,0 +1,167 @@
+package main
+
+import (
+    "fmt"
+    "log"
+    "net/http"
+    "strconv"
+    "encoding/json"
+    "io/ioutil"
+    "sync"
+    "os"
+    "time"
+    "bufio"
+    "bytes"
+    
+    "github.com/gorilla/mux"
+)
+
+var counter int
+var mutex = &sync.Mutex{}
+
+// Article ...
+type Article struct {
+    Id     string `json:"Id"`
+    Title  string `json:"Title"`
+    Author string `json:"author"`
+    Link   string `json:"link"`
+}
+ 
+// Articles ...
+var Articles []Article
+
+
+// readLines reads a whole file into memory
+// and returns a slice of its lines.
+func read(path string) (string, error) {
+    lines, err := readLines(path)
+    if err != nil {
+        // log.Printf("Couldn't read %q \n", path)
+        return "", err
+    }
+    str := ""
+    for _, line := range lines {
+        str += line
+    }
+    return str, nil
+}
+func readLines(path string) ([]string, error) {
+    file, err := os.Open(path)
+    if err != nil {
+        return nil, err
+    }
+    defer file.Close()
+
+    var lines []string
+    scanner := bufio.NewScanner(file)
+    for scanner.Scan() {
+        lines = append(lines, scanner.Text())
+    }
+    return lines, scanner.Err()
+}
+
+// writeLines writes the lines to the given file.
+func writeLines(lines []string, path string) error {
+    file, err := os.Create(path)
+    if err != nil {
+        return err
+    }
+    defer file.Close()
+
+    w := bufio.NewWriter(file)
+    for _, line := range lines {
+        fmt.Fprintln(w, line)
+    }
+    return w.Flush()
+}
+ 
+func homePage(w http.ResponseWriter, r *http.Request) {
+    // fmt.Fprintf(w, "<b>Welcome to the HomePage!</b>")
+    text, err := read("index.html")
+    if err != nil {
+        log.Printf("Couldn't read %q\n", "index.html")
+    }
+    fmt.Fprintf(w, text)
+    fmt.Println("Endpoint Hit: homePage")
+}
+
+func echoString(w http.ResponseWriter, r *http.Request) {
+    fmt.Fprintf(w, "hello")
+}
+
+func incrementCounter(w http.ResponseWriter, r *http.Request) {
+    mutex.Lock()
+    counter++
+    fmt.Fprintf(w, strconv.Itoa(counter))
+    mutex.Unlock()
+}
+func returnAllArticles(w http.ResponseWriter, r *http.Request) {
+    fmt.Println("Endpoint Hit: returnAllArticles")
+    json.NewEncoder(w).Encode(Articles)
+}
+func returnSingleArticle(w http.ResponseWriter, r *http.Request) {
+    vars := mux.Vars(r)
+    key := vars["id"]
+ 
+    for _, article := range Articles {
+        if article.Id == key {
+            json.NewEncoder(w).Encode(article)
+        }
+    }
+}
+func createNewArticle(w http.ResponseWriter, r *http.Request) {
+    reqBody, _ := ioutil.ReadAll(r.Body)
+    var article Article 
+    json.Unmarshal(reqBody, &article)
+    Articles = append(Articles, article)
+ 
+    json.NewEncoder(w).Encode(article)}
+func deleteArticle(w http.ResponseWriter, r *http.Request) {
+    vars := mux.Vars(r)
+    id := vars["id"]
+ 
+    for index, article := range Articles {
+        if article.Id == id {
+            Articles = append(Articles[:index], Articles[index+1:]...)
+        }
+    }
+}
+func downloadHandler(w http.ResponseWriter, r *http.Request) {
+    r.ParseForm()
+    StoredAs := r.Form.Get("StoredAs") // file name
+    data, err := ioutil.ReadFile("files/"+StoredAs)
+    if err != nil { fmt.Fprint(w, err) }
+    http.ServeContent(w, r, StoredAs, time.Now(), bytes.NewReader(data))
+}
+func handleRequests(port int) {
+    portNum := strconv.Itoa(port)
+    log.Println("serving on", "http://localhost:"+portNum)
+    router := mux.NewRouter().StrictSlash(true)
+    router.HandleFunc("/", homePage)
+    router.HandleFunc("/articles", returnAllArticles)
+    router.HandleFunc("/article/{id}",returnSingleArticle)
+    router.HandleFunc("/article", createNewArticle).Methods("POST")
+    router.HandleFunc("/article/{id}", deleteArticle).Methods("DELETE")
+    log.Fatal(http.ListenAndServe(":"+portNum, router))
+}
+
+func main() {
+    Articles = []Article{
+        Article{
+            Id:     "1",
+            Title:  "Python Intermediate and Advanced 101",
+            Author: "Arkaprabha Majumdar",
+            Link:   "https://www.amazon.com/dp/B089KVK23P"},
+        Article{
+            Id:     "2",
+            Title:  "R programming Advanced",
+            Author: "Arkaprabha Majumdar",
+            Link:   "https://www.amazon.com/dp/B089WH12CR"},
+        Article{
+            Id:     "3",
+            Title:  "R programming Fundamentals",
+            Author: "Arkaprabha Majumdar",
+            Link:   "https://www.amazon.com/dp/B089S58WWG"},
+    }
+    handleRequests(8000)
+}
